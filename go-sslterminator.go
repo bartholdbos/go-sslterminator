@@ -62,27 +62,58 @@ func handle(clientConn net.Conn) {
 			return
 		}
 
-		backendConn, err := net.Dial("tcp", backendAddress)
+		backendConn, err := tls.Dial("tcp", backendAddress, nil)
 		if err != nil {
-			log.Printf("error in net.Dial: %s", err)
+			log.Printf("error in tls.Dial: %s", err)
 			clientConn.Close()
 			return
 		}
 
-		go Tunnel(clientConn, backendConn)
-		go Tunnel(backendConn, clientConn)
+		go Tunnel(clientConn, backendConn, "Server")
+		go Tunnel(backendConn, clientConn, "Client")
 	}
 }
 
-func Tunnel(from, to io.ReadWriteCloser) {
+func Tunnel(from, to io.ReadWriteCloser, side string) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("recovered while tunneling")
 		}
 	}()
 
-	io.Copy(from, to)
+	copyBuffer(from, to, side)
 	to.Close()
 	from.Close()
 	log.Printf("tunneling is done")
+}
+
+func copyBuffer(dst io.Writer, src io.Reader, side string) (written int64, err error) {
+	buf := make([]byte, 32*1024)
+
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			log.Print(side + ": " + string(buf[0:nr]))
+			nw, ew := dst.Write(buf[0:nr])
+			if nw > 0 {
+				written += int64(nw)
+			}
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = io.ErrShortWrite
+				break
+			}
+		}
+		if er == io.EOF {
+			break
+		}
+		if er != nil {
+			err = er
+			break
+		}
+	}
+	return written, err
 }
